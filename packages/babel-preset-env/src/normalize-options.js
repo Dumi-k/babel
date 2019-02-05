@@ -1,5 +1,6 @@
 //@flow
 
+import { coerce } from "semver";
 import invariant from "invariant";
 import corejs2Polyfills from "../data/corejs2-built-ins.json";
 import { defaultWebIncludes } from "./defaults";
@@ -23,16 +24,21 @@ const validateTopLevelOptions = (options: Options) => {
   }
 };
 
-const validIncludesAndExcludesWithCoreJS2 = new Set([
+const allPluginsList = [
   ...Object.keys(pluginsList),
   ...Object.keys(moduleTransformations).map(m => moduleTransformations[m]),
+];
+
+const validIncludesAndExcludesWithoutCoreJS = new Set(allPluginsList);
+
+const validIncludesAndExcludesWithCoreJS2 = new Set([
+  ...allPluginsList,
   ...Object.keys(corejs2Polyfills),
   ...defaultWebIncludes,
 ]);
 
 const validIncludesAndExcludesWithCoreJS3 = new Set([
-  ...Object.keys(pluginsList),
-  ...Object.keys(moduleTransformations).map(m => moduleTransformations[m]),
+  ...allPluginsList,
   ...Object.keys(corejs3Polyfills),
 ]);
 
@@ -47,9 +53,11 @@ const pluginToRegExp = (plugin: any): ?RegExp => {
 
 const selectPlugins = (regexp: ?RegExp, corejs: number): Array<string> =>
   Array.from(
-    corejs == 2
-      ? validIncludesAndExcludesWithCoreJS2
-      : validIncludesAndExcludesWithCoreJS3,
+    corejs
+      ? corejs == 2
+        ? validIncludesAndExcludesWithCoreJS2
+        : validIncludesAndExcludesWithCoreJS3
+      : validIncludesAndExcludesWithoutCoreJS,
   ).filter(item => regexp instanceof RegExp && regexp.test(item));
 
 const flatten = array => [].concat(...array);
@@ -176,17 +184,29 @@ export const validateUseBuiltInsOption = (
 export default function normalizeOptions(opts: Options) {
   validateTopLevelOptions(opts);
 
-  const corejs = opts.corejs && String(opts.corejs) === "3" ? 3 : 2;
+  let corejs = null;
+  if (opts.useBuiltIns && opts.corejs === undefined) {
+    corejs = coerce("2");
+    console.log(
+      "\nWith `useBuiltIns` option, required direct setting of `corejs` option\n",
+    );
+  } else if (["string", "number"].includes(typeof opts.corejs)) {
+    corejs = coerce(String(opts.corejs));
+  }
+
+  if (opts.useBuiltIns && (!corejs || corejs.major < 2 || corejs.major > 3)) {
+    throw new RangeError("Supported only core-js@2 and core-js@3.");
+  }
 
   const include = expandIncludesAndExcludes(
     opts.include,
     TopLevelOptions.include,
-    corejs,
+    corejs && corejs.major,
   );
   const exclude = expandIncludesAndExcludes(
     opts.exclude,
     TopLevelOptions.exclude,
-    corejs,
+    corejs && corejs.major,
   );
 
   checkDuplicateIncludeExcludes(include, exclude);
